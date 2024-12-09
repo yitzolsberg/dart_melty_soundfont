@@ -14,7 +14,10 @@ dependencies:
   flutter_pcm_sound: ^1.0.0
   dart_melty_soundfont:
     path: ../
+  mp_audio_stream:
+    git: https://github.com/yitzolsberg/mp-audio-stream
+  flutter_piano_pro: ^0.6.0
 
 flutter:
   assets: 
-    - assets/TimGM6mbEdit.sf2
+    - assets/
