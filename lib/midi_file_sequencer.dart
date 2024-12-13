@@ -5,7 +5,6 @@ import 'synthesizer.dart';
 import 'audio_renderer.dart';
 import 'list_slice.dart';
 
-
 /// <summary>
 /// An instance of the MIDI file sequencer.
 /// </summary>
@@ -41,13 +40,13 @@ class MidiFileSequencer implements AudioRenderer {
   /// </summary>
   /// <param name="midiFile">The MIDI file to be played.</param>
   /// <param name="loop">If <c>true</c>, the MIDI file loops after reaching the end.</param>
-  void play(MidiFile midiFile, {required bool loop}) {
+  void play(MidiFile midiFile, {required bool loop, Duration? position}) {
     _midiFile = midiFile;
     _loop = loop;
 
     _blockWrote = synthesizer.blockSize;
 
-    _currentTime = Duration.zero;
+    _currentTime = position ?? Duration.zero;
     _msgIndex = 0;
     _loopIndex = 0;
 
