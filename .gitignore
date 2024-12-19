@@ -8,3 +8,6 @@ example/*
 !example/assets/TimGM6mb_but_fixed__piano_.sf2
 !example/lib/main.dart
 !example/pubspec.yaml
+example/assets/FluidR3_GM2-2.sf2
+example/assets/JJazzLab-SoundFont.sf2
+example/assets/OmegaGMGS2.sf2
