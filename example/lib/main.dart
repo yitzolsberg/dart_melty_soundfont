@@ -143,19 +143,8 @@ class _MyAppState extends State<MeltyApp> {
     _synth!.masterVolume = 1.0;
     _sequencer = MidiFileSequencer(_synth!);
 
-    // Start MIDI playback
     _sequencer!.play(midiFile, loop: false);
 
-    // _sequencer!.onSendMessage = (s, c1, c2, d1, d2) {
-    //   print('MIDI: $s $c1 $c2 $d1 $d2');
-    // };
-
-    // _synth!.selectPreset(channel: 9, preset: 100);
-    // _synth!.selectPreset(channel: 11, preset: 21);
-    // _synth!.selectPreset(channel: 12, preset: 138);
-    // _synth!.selectPreset(channel: 13, preset: 108);
-    // _synth!.selectPreset(channel: 14, preset: 32);
-    // _synth!.selectPreset(channel: 15, preset: 38);
     _timer = Timer.periodic(Duration(milliseconds: 5), (Timer t) async {
       _pushMidi();
     });
@@ -236,13 +225,18 @@ class _MyAppState extends State<MeltyApp> {
       _full = stats.full;
       setState(() {});
     }
-    var amountToSend = math.max(100, balanceAmount - lastBufferCount);
+    var amountToSend = math.max(0, balanceAmount - lastBufferCount);
     amountToSend = math.min(amountToSend, 2000);
     var buf = List<double>.filled(amountToSend, 0);
     _sequencer!.renderInterleaved(buf);
     var newLastCount = _audioStream.push(Float32List.fromList(buf));
+    var currentTime = _sequencer!.position;
+    var adjustment = newLastCount * 500 ~/ sampleRate;
+    var editidCurrentTime = currentTime - Duration(milliseconds: adjustment);
+    print(
+        'current: ${currentTime.inMilliseconds} - $adjustment = ${editidCurrentTime.inMilliseconds} buffer: $newLastCount, pushed $amountToSend');
+
     lastBufferCount = newLastCount;
-    //print('in buffer: ${lastBufferCount - amountToSend}, pushed $amountToSend');
   }
 
   var pattern = <bool?>[false, true, null, true, false, true, false, true];
@@ -330,7 +324,7 @@ class _MyAppState extends State<MeltyApp> {
       child = Center(
         child: Column(
           children: [
-            Row(
+            Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButton<(int, String)>(
