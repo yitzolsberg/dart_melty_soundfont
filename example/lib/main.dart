@@ -19,7 +19,7 @@ import 'package:mp_audio_stream/mp_audio_stream.dart';
 JJazzLab should be set to output to G
 
 */
-int sampleRate = 44100;
+int sampleRate = 48000;
 
 void main() => runApp(const MeltyApp());
 
@@ -38,13 +38,11 @@ class _MyAppState extends State<MeltyApp> {
   bool _isPlaying = false;
   bool _soundFontLoaded = false;
 
-  Map<int, NoteModel> pointerAndNote = {};
-
   List<(int, String)> presets = [];
 
   int _feedCount = 0;
 
-  final balanceAmount = 60 * sampleRate * 2 ~/ 1000;
+  final balanceAmount = 120 * sampleRate * 2 ~/ 1000;
 
   List<String> soundFonts = [];
   List<String> midis = [];
@@ -76,7 +74,7 @@ class _MyAppState extends State<MeltyApp> {
     _audioStream.init(
       channels: 2,
       waitingBufferMilliSec: 30,
-      bufferMilliSec: 100,
+      bufferMilliSec: 200,
     );
   }
 
@@ -100,11 +98,10 @@ class _MyAppState extends State<MeltyApp> {
     ByteData bytes = await rootBundle.load(value);
     _synth = Synthesizer.loadByteData(bytes, SynthesizerSettings());
 
-    // print available instrumentsk
     List<Preset> p = _synth!.soundFont.presets;
     presets = [];
     for (int i = 0; i < p.length; i++) {
-      String instrumentName =
+      var instrumentName =
           p[i].regions.isNotEmpty ? p[i].regions[0].instrument.name : "N/A";
       presets.add((i, '${p[i].name} ($instrumentName)'));
     }
@@ -134,20 +131,49 @@ class _MyAppState extends State<MeltyApp> {
 
   bool _isMidiPlaying = false;
 
+  DateTime? _started;
+
   Future<void> _playMidi() async {
     _synth!.noteOffAll();
     ByteData midiBytes = await rootBundle.load(selectedMidi);
     MidiFile midiFile = MidiFile.fromByteData(midiBytes);
     _isMidiPlaying = true;
     setState(() {});
-    _synth!.masterVolume = 1.0;
+    _synth!.masterVolume = 1.5;
     _sequencer = MidiFileSequencer(_synth!);
 
+    // _sequencer!.onSendMessage = (synth, a, b, c, d) {
+    //   var command = switch (b) {
+    //     0x80 => 'NoteOff',
+    //     0x90 => 'NoteOn',
+    //     0xB0 => 'ControlChange',
+    //     0xC0 => 'ProgramChange',
+    //     _ => 'COM' + b.toRadixString(16)
+    //   };
+
+    //   var data1 = switch ((b, c)) {
+    //     (0xB0, 0x00) => 'SetBank',
+    //     (0xB0, 0x07) => 'Volume',
+    //     (0xB0, 0x0A) => 'Pan',
+    //     (0xB0, 0x40) => 'Sustain',
+    //     (0xB0, 0x43) => 'Soft',
+    //     (0xB0, 0x5B) => 'Release',
+    //     (0xB0, 0x5D) => 'ChorusSend',
+    //     (0xB0, 0x78) => 'AllSoundOff',
+    //     (0xB0, 0x79) => 'ResetAllControllers',
+    //     (0xB0, 0x7B) => 'AllNotesOff',
+    //     (0xB0, _) => 'CC' + c.toRadixString(16),
+    //     (_, _) => c.toString()
+    //   };
+
+    //   print('CH $a $command $data1 $d');
+    // };
     _sequencer!.play(midiFile, loop: false);
 
-    _timer = Timer.periodic(Duration(milliseconds: 5), (Timer t) async {
+    _timer = Timer.periodic(Duration(milliseconds: 10), (Timer t) async {
       _pushMidi();
     });
+
     // Change the playback speed.
   }
 
@@ -179,44 +205,6 @@ class _MyAppState extends State<MeltyApp> {
 
   var rand = Random();
 
-  Future<void> _playNote({required int key, double velocity = 1.0}) async {
-    if (!_isPlaying) return;
-    _synth!.noteOff(
-      channel: 0,
-      key: key - 12,
-    );
-
-    var vel = ((80 + rand.nextInt(40)) * velocity).toInt();
-
-    _synth!.noteOn(
-      channel: 0,
-      key: key - 12,
-      velocity: vel,
-    );
-  }
-
-  /// Stops a note on the specified channel.
-  void stopNote({required int key}) {
-    _synth!.noteOff(channel: 0, key: key);
-  }
-
-  void _push() {
-    _feedCount++;
-    if (_feedCount % 50 == 0) {
-      var stats = _audioStream.stat();
-      _exhaust = stats.exhaust;
-      _full = stats.full;
-      setState(() {});
-    }
-    var amountToSend = math.max(100, balanceAmount - lastBufferCount);
-    amountToSend = math.min(amountToSend, 2000);
-    var buf = List<double>.filled(amountToSend, 0);
-    _synth!.renderInterleaved(buf);
-    var newLastCount = _audioStream.push(Float32List.fromList(buf));
-    lastBufferCount = newLastCount;
-    print('in buffer: ${lastBufferCount - amountToSend}, pushed $amountToSend');
-  }
-
   void _pushMidi() {
     _feedCount++;
     if (_feedCount % 50 == 0) {
@@ -231,10 +219,19 @@ class _MyAppState extends State<MeltyApp> {
     _sequencer!.renderInterleaved(buf);
     var newLastCount = _audioStream.push(Float32List.fromList(buf));
     var currentTime = _sequencer!.position;
-    var adjustment = newLastCount * 500 ~/ sampleRate;
-    var editidCurrentTime = currentTime - Duration(milliseconds: adjustment);
-    print(
-        'current: ${currentTime.inMilliseconds} - $adjustment = ${editidCurrentTime.inMilliseconds} buffer: $newLastCount, pushed $amountToSend');
+    var adjustment = newLastCount * 500000 ~/ sampleRate;
+    var editidCurrentTime = currentTime - Duration(microseconds: adjustment);
+    if (_started == null) _started = DateTime.now();
+
+    var currentTime2 = DateTime.now().difference(_started!);
+
+    // print(
+    //     'current: ${currentTime.inMilliseconds} - ${adjustment/1000} = ${editidCurrentTime.inMilliseconds} '
+    //     'current2: ${currentTime2.inMilliseconds} '
+    //             'diff: ${(currentTime2 - editidCurrentTime).inMilliseconds} '
+
+    //     'buffer: $newLastCount, pushed $amountToSend '
+    //     );
 
     lastBufferCount = newLastCount;
   }
@@ -428,5 +425,43 @@ class _MyAppState extends State<MeltyApp> {
       appBar: AppBar(title: const Text('Soundfont')),
       body: child,
     ));
+  }
+
+  Future<void> _playNote({required int key, double velocity = 1.0}) async {
+    if (!_isPlaying) return;
+    _synth!.noteOff(
+      channel: 0,
+      key: key - 12,
+    );
+
+    var vel = ((80 + rand.nextInt(40)) * velocity).toInt();
+
+    _synth!.noteOn(
+      channel: 0,
+      key: key - 12,
+      velocity: vel,
+    );
+  }
+
+  /// Stops a note on the specified channel.
+  void stopNote({required int key}) {
+    _synth!.noteOff(channel: 0, key: key);
+  }
+
+  void _push() {
+    _feedCount++;
+    if (_feedCount % 50 == 0) {
+      var stats = _audioStream.stat();
+      _exhaust = stats.exhaust;
+      _full = stats.full;
+      setState(() {});
+    }
+    var amountToSend = math.max(100, balanceAmount - lastBufferCount);
+    amountToSend = math.min(amountToSend, 10000);
+    var buf = List<double>.filled(amountToSend, 0);
+    _synth!.renderInterleaved(buf);
+    var newLastCount = _audioStream.push(Float32List.fromList(buf));
+    lastBufferCount = newLastCount;
+    print('in buffer: ${lastBufferCount - amountToSend}, pushed $amountToSend');
   }
 }
