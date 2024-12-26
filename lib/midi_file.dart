@@ -1,30 +1,51 @@
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'binary_reader.dart';
 import 'midi_file_loop_type.dart';
+import 'song_position.dart';
+
+class MidiEventDetails {
+  final MidiMessage message;
+  final Duration time;
+  final SongPosition position;
+
+  MidiEventDetails(this.message, this.time, this.position);
+}
 
 /// <summary>
 /// Represents a standard MIDI file.
 /// </summary>
 class MidiFile {
-  late List<MidiMessage> _messages;
-  late List<Duration> _times;
+  /// <summary>
+  /// The length of the MIDI file.
+  /// </summary>
+  Duration get length => _events.last.time;
+
+  List<MidiEventDetails> get events => _events;
+
+  late List<MidiEventDetails> _events;
 
   /// Loads a MIDI file from the file path.
-  factory MidiFile.fromFile(String path, {int? loopPoint, MidiFileLoopType? loopType}) {
+  factory MidiFile.fromFile(String path,
+      {int? loopPoint, MidiFileLoopType? loopType}) {
     BinaryReader reader = BinaryReader.fromFile(path);
 
-    return MidiFile.fromBinaryReader(reader, loopPoint: loopPoint, loopType: loopType);
+    return MidiFile.fromBinaryReader(reader,
+        loopPoint: loopPoint, loopType: loopType);
   }
 
   /// Loads a MIDI file from the byte data
-  factory MidiFile.fromByteData(ByteData bytes, {int? loopPoint, MidiFileLoopType? loopType}) {
+  factory MidiFile.fromByteData(ByteData bytes,
+      {int? loopPoint, MidiFileLoopType? loopType}) {
     BinaryReader reader = BinaryReader.fromByteData(bytes);
 
-    return MidiFile.fromBinaryReader(reader, loopPoint: loopPoint, loopType: loopType);
+    return MidiFile.fromBinaryReader(reader,
+        loopPoint: loopPoint, loopType: loopType);
   }
 
-  MidiFile.fromBinaryReader(BinaryReader reader, {int? loopPoint, MidiFileLoopType? loopType}) {
+  MidiFile.fromBinaryReader(BinaryReader reader,
+      {int? loopPoint, MidiFileLoopType? loopType}) {
     if (loopPoint != null && loopPoint < 0) {
       throw "The loop point must be a non-negative value.";
     }
@@ -56,7 +77,8 @@ class MidiFile {
     final trackCount = reader.readInt16BigEndian();
     final resolution = reader.readInt16BigEndian();
 
-    final messageLists = List<List<MidiMessage>>.filled(trackCount, [], growable: false);
+    final messageLists =
+        List<List<MidiMessage>>.filled(trackCount, [], growable: false);
     final tickLists = List<List<int>>.filled(trackCount, [], growable: false);
 
     for (int i = 0; i < trackCount; i++) {
@@ -83,8 +105,7 @@ class MidiFile {
     }
 
     final mergedTracks = _mergeTracks(messageLists, tickLists, resolution);
-    _messages = mergedTracks.messages;
-    _times = mergedTracks.times;
+    _events = mergedTracks.events;
   }
 
   static _MidiMessagesAndTicks _readTrack(
@@ -156,6 +177,10 @@ class MidiFile {
               ticks.add(tick);
               break;
 
+            case 0x58: // Time Signature
+              var beatsPerBar = _readBeatsPerBar(reader);
+              break;
+
             default:
               _discardData(reader);
               break;
@@ -185,8 +210,7 @@ class MidiFile {
       List<List<MidiMessage>> messageLists,
       List<List<int>> tickLists,
       int resolution) {
-    final mergedMessages = <MidiMessage>[];
-    final mergedTimes = <Duration>[];
+    final mergedEvents = <MidiEventDetails>[];
 
     final indices = List<int>.filled(messageLists.length, 0, growable: false);
 
@@ -215,7 +239,7 @@ class MidiFile {
       final nextTick = tickLists[minIndex][indices[minIndex]];
       final deltaTick = nextTick - currentTick;
       final deltaTime =
-      getTimeSpanFromSeconds(60.0 / (resolution * tempo) * deltaTick);
+          getTimeSpanFromSeconds(60.0 / (resolution * tempo) * deltaTick);
 
       currentTick += deltaTick;
       currentTime += deltaTime;
@@ -251,14 +275,18 @@ class MidiFile {
     reader.pos += size;
   }
 
-  /// <summary>
-  /// The length of the MIDI file.
-  /// </summary>
-  Duration get length => _times.last;
+  static int _readBeatsPerBar(BinaryReader reader) {
+    final size = reader.readMidiVariablelength();
+    if (size != 4) {
+      throw "Failed to read the time signature value.";
+    }
 
-  List<MidiMessage> get messages => _messages;
-
-  List<Duration> get times => _times;
+    final numerator = reader.readUInt8();
+    final denominator = pow(2, reader.readUInt8());
+    final b2 = reader.readUInt8();
+    final b3 = reader.readUInt8();
+    return numerator * 4 ~/ denominator;
+  }
 }
 
 class MidiMessage {
@@ -387,8 +415,7 @@ class _MidiMessagesAndTicks {
 }
 
 class _MidiMessagesAndTimes {
-  final List<MidiMessage> messages;
-  final List<Duration> times;
+  final List<MidiEventDetails> events;
 
-  _MidiMessagesAndTimes(this.messages, this.times);
+  _MidiMessagesAndTimes(this.events);
 }
