@@ -3,14 +3,17 @@ import 'dart:typed_data';
 
 import 'binary_reader.dart';
 import 'midi_file_loop_type.dart';
-import 'song_position.dart';
 
 class MidiEventDetails {
   final MidiMessage message;
   final Duration time;
-  final SongPosition position;
 
-  MidiEventDetails(this.message, this.time, this.position);
+  MidiEventDetails(this.message, this.time);
+
+  @override
+  String toString() {
+    return "$time: $message";
+  }
 }
 
 /// <summary>
@@ -177,10 +180,6 @@ class MidiFile {
               ticks.add(tick);
               break;
 
-            case 0x58: // Time Signature
-              var beatsPerBar = _readBeatsPerBar(reader);
-              break;
-
             default:
               _discardData(reader);
               break;
@@ -248,14 +247,13 @@ class MidiFile {
       if (message.type == MidiMessageType.tempoChange) {
         tempo = message.tempo;
       } else {
-        mergedMessages.add(message);
-        mergedTimes.add(currentTime);
+        mergedEvents.add(MidiEventDetails(message, currentTime));
       }
 
       indices[minIndex]++;
     }
 
-    return _MidiMessagesAndTimes(mergedMessages, mergedTimes);
+    return _MidiMessagesAndTimes(mergedEvents);
   }
 
   static int _readTempo(BinaryReader reader) {
@@ -366,9 +364,67 @@ class MidiMessage {
         return "LoopEnd";
       case MidiMessageType.endOfTrack:
         return "EndOfTrack";
-      default:
-        return "CH$channel: ${_toHexString(command)}, ${_toHexString(data1)}, ${_toHexString(data2)}";
     }
+
+    var c = 'COM' + command.toRadixString(16);
+    switch (command) {
+      case 0x80:
+        c = 'NoteOff';
+        break;
+      case 0x90:
+        c = 'NoteOn';
+        break;
+      case 0xB0:
+        c = 'CC';
+        break;
+      case 0xC0:
+        c = 'ProgramChange';
+        break;
+    }
+
+    var d1 = c.toString();
+    if (command == 0xB0) {
+      switch (data1) {
+        case 0x00:
+          d1 = 'SetBank';
+          break;
+        case 0x07:
+          d1 = 'Volume';
+          break;
+        case 0x0A:
+          d1 = 'Pan';
+          break;
+        case 0x40:
+          d1 = 'Sustain';
+          break;
+        case 0x43:
+          d1 = 'Soft';
+          break;
+        case 0x5B:
+          d1 = 'Release';
+          break;
+        case 0x5D:
+          d1 = 'ChorusSend';
+          break;
+        case 0x78:
+          d1 = 'AllSoundOff';
+          break;
+        case 0x79:
+          d1 = 'ResetAllControllers';
+          break;
+        case 0x7B:
+          d1 = 'AllNotesOff';
+          break;
+        default:
+          d1 = 'CC' + data1.toRadixString(16);
+          break;
+      }
+    }
+    if (command == 0x80 || command == 0x90) {
+      d1 = _getNoteName(data1);
+    }
+
+    return 'CH$channel $c $d1 $data2';
   }
 
   String _toHexString(int value) {
@@ -391,6 +447,34 @@ class MidiMessage {
   }
 
   double get tempo => 60000000.0 / ((command << 16) | (data1 << 8) | data2);
+
+  String _getNoteName(int data1) {
+    /*
+    21 = A0
+    24 = C1
+    127 = G9
+    */
+    if (data1 < 21 || data1 > 127) {
+      return 'Note $data1';
+    }
+    var notes = [
+      'C',
+      'C#',
+      'D',
+      'D#',
+      'E',
+      'F',
+      'F#',
+      'G',
+      'G#',
+      'A',
+      'A#',
+      'B',
+    ];
+    var octave = (data1 / 12).floor() - 1;
+    var note = notes[data1 % 12];
+    return '$note$octave';
+  }
 }
 
 class MidiMessageType {

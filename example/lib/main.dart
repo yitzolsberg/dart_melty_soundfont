@@ -74,7 +74,7 @@ class _MyAppState extends State<MeltyApp> {
     _audioStream.init(
       channels: 2,
       waitingBufferMilliSec: 30,
-      bufferMilliSec: 200,
+      bufferMilliSec: 300,
     );
   }
 
@@ -137,6 +137,7 @@ class _MyAppState extends State<MeltyApp> {
     _synth!.noteOffAll();
     ByteData midiBytes = await rootBundle.load(selectedMidi);
     MidiFile midiFile = MidiFile.fromByteData(midiBytes);
+    print(midiFile.events.map((e) => e.toString()).join('\n'));
     _isMidiPlaying = true;
     setState(() {});
     _synth!.masterVolume = 1.5;
@@ -173,8 +174,6 @@ class _MyAppState extends State<MeltyApp> {
     _timer = Timer.periodic(Duration(milliseconds: 10), (Timer t) async {
       _pushMidi();
     });
-
-    // Change the playback speed.
   }
 
   Duration? _lastDuration;

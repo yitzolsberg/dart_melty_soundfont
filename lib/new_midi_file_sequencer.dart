@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'midi_file.dart';
+import 'midi_file_sequencer.dart';
 import 'synthesizer.dart';
 import 'audio_renderer.dart';
 import 'list_slice.dart';
@@ -13,12 +14,12 @@ import 'list_slice.dart';
 /// If you want to control playback and render the waveform in separate threads,
 /// you must make sure that the methods are not called at the same time.
 /// </remarks>
-class MidiFileSequencer implements AudioRenderer {
+class NewMidiFileSequencer implements AudioRenderer {
   final Synthesizer synthesizer;
 
   double _speed = 1.0;
 
-  MidiFile? _midiFile;
+  final MidiFile midiFile;
   bool? _loop;
 
   int _blockWrote = 0;
@@ -33,32 +34,33 @@ class MidiFileSequencer implements AudioRenderer {
   /// Initializes a new instance of the sequencer.
   /// </summary>
   /// <param name="synthesizer">The synthesizer to be used by the sequencer.</param>
-  MidiFileSequencer(this.synthesizer);
+  NewMidiFileSequencer(this.synthesizer, this.midiFile);
 
   /// <summary>
   /// Plays the MIDI file.
   /// </summary>
   /// <param name="midiFile">The MIDI file to be played.</param>
   /// <param name="loop">If <c>true</c>, the MIDI file loops after reaching the end.</param>
-  void play(MidiFile midiFile, {required bool loop, Duration? position}) {
-    _midiFile = midiFile;
+  void play({required bool loop, Duration? position}) {
     _loop = loop;
 
     _blockWrote = synthesizer.blockSize;
-
     _currentTime = position ?? Duration.zero;
+
     _msgIndex = 0;
     _loopIndex = 0;
 
     synthesizer.reset();
+
+    if (position != null && position > Duration.zero) {
+      _processEvents(skipping: true);
+    }
   }
 
   /// <summary>
   /// Stops playing.
   /// </summary>
   void stop() {
-    _midiFile = null;
-
     synthesizer.reset();
   }
 
@@ -88,22 +90,25 @@ class MidiFileSequencer implements AudioRenderer {
     }
   }
 
-  void _processEvents() {
-    if (_midiFile == null) {
-      return;
-    }
-
-    while (_msgIndex < _midiFile!.events.length) {
-      var time = _midiFile!.events[_msgIndex].time;
-      var msg = _midiFile!.events[_msgIndex].message;
+  void _processEvents({bool skipping = false}) {
+    while (_msgIndex < midiFile.events.length) {
+      var time = midiFile.events[_msgIndex].time;
+      var msg = midiFile.events[_msgIndex].message;
       if (time <= _currentTime) {
         if (msg.type == MidiMessageType.normal) {
           if (onSendMessage == null) {
-            synthesizer.processMidiMessage(
-                channel: msg.channel,
-                command: msg.command,
-                data1: msg.data1,
-                data2: msg.data2);
+            if (!skipping || (msg.command != 0x80 && msg.command != 0x90)) {
+              var data1 = msg.data1;
+              if ((msg.command == 0x80 || msg.command == 0x90) &&
+                  msg.channel != 9) {
+                data1 -= 4;
+              }
+              synthesizer.processMidiMessage(
+                  channel: msg.channel,
+                  command: msg.command,
+                  data1: data1,
+                  data2: msg.data2);
+            }
           } else {
             onSendMessage!(
                 synthesizer, msg.channel, msg.command, msg.data1, msg.data2);
@@ -112,7 +117,7 @@ class MidiFileSequencer implements AudioRenderer {
           if (msg.type == MidiMessageType.loopStart) {
             _loopIndex = _msgIndex;
           } else if (msg.type == MidiMessageType.loopEnd) {
-            _currentTime = _midiFile!.events[_loopIndex].time;
+            _currentTime = midiFile.events[_loopIndex].time;
             _msgIndex = _loopIndex;
             synthesizer.noteOffAll();
           }
@@ -123,17 +128,12 @@ class MidiFileSequencer implements AudioRenderer {
       }
     }
 
-    if (_msgIndex == _midiFile!.events.length && _loop == true) {
-      _currentTime = _midiFile!.events[_loopIndex].time;
+    if (_msgIndex == midiFile.events.length && _loop == true) {
+      _currentTime = midiFile.events[_loopIndex].time;
       _msgIndex = _loopIndex;
       synthesizer.noteOffAll();
     }
   }
-
-  /// <summary>
-  /// Gets the currently playing MIDI file.
-  /// </summary>
-  MidiFile? get midiFile => _midiFile;
 
   /// <summary>
   /// Gets the current playback position.
@@ -148,11 +148,7 @@ class MidiFileSequencer implements AudioRenderer {
   /// This value will never be <c>true</c> when loop playback is enabled.
   /// </remarks>
   bool get endOfSequence {
-    if (midiFile == null) {
-      return true;
-    } else {
-      return _msgIndex == midiFile!.events.length;
-    }
+    return _msgIndex == midiFile.events.length;
   }
 
   /// <summary>
@@ -172,19 +168,3 @@ class MidiFileSequencer implements AudioRenderer {
     }
   }
 }
-
-/// <summary>
-/// Represents the method that is called each time a MIDI message is processed during playback.
-/// </summary>
-/// <param name="synthesizer">The synthesizer used by the sequencer.</param>
-/// <param name="channel">The channel to which the message will be sent.</param>
-/// <param name="command">The type of the message.</param>
-/// <param name="data1">The first data part of the message.</param>
-/// <param name="data2">The second data part of the message.</param>
-typedef MessageHook = void Function(
-  Synthesizer synthesizer,
-  int channel,
-  int command,
-  int data1,
-  int data2,
-);
