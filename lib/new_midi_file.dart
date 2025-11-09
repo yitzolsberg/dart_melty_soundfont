@@ -4,54 +4,62 @@ import 'dart:typed_data';
 import 'binary_reader.dart';
 import 'midi_file_loop_type.dart';
 
-class MidiEventDetails {
+class MidiEventDetailsEx {
   final MidiMessage message;
   final Duration time;
+  final int bar;
+  final int beat;
+  final int tick;
+  final int songTick;
 
-  MidiEventDetails(this.message, this.time);
+  MidiEventDetailsEx(
+    this.message,
+    this.time,
+    this.songTick,
+    this.bar,
+    this.beat,
+    this.tick,
+  );
 
   @override
   String toString() {
-    return "$time: $message";
+    return "$time: [$bar:$beat:$tick] $message";
   }
 }
 
 /// <summary>
 /// Represents a standard MIDI file.
 /// </summary>
-class MidiFile {
+class NewMidiFile {
   /// <summary>
   /// The length of the MIDI file.
   /// </summary>
   Duration get length => _events.last.time;
 
-  List<MidiEventDetails> get events => _events;
+  @override
+  List<MidiEventDetailsEx> get events => _events;
 
-  late List<MidiEventDetails> _events;
-
-  late List<MidiEventDetails> _otherEvents;
-
-  late List<MidiEventDetails> _noteEvents;
+  late List<MidiEventDetailsEx> _events;
 
   /// Loads a MIDI file from the file path.
-  factory MidiFile.fromFile(String path,
+  factory NewMidiFile.fromFile(String path,
       {int? loopPoint, MidiFileLoopType? loopType}) {
     BinaryReader reader = BinaryReader.fromFile(path);
 
-    return MidiFile.fromBinaryReader(reader,
+    return NewMidiFile.fromBinaryReader(reader,
         loopPoint: loopPoint, loopType: loopType);
   }
 
   /// Loads a MIDI file from the byte data
-  factory MidiFile.fromByteData(ByteData bytes,
+  factory NewMidiFile.fromByteData(ByteData bytes,
       {int? loopPoint, MidiFileLoopType? loopType}) {
     BinaryReader reader = BinaryReader.fromByteData(bytes);
 
-    return MidiFile.fromBinaryReader(reader,
+    return NewMidiFile.fromBinaryReader(reader,
         loopPoint: loopPoint, loopType: loopType);
   }
 
-  MidiFile.fromBinaryReader(BinaryReader reader,
+  NewMidiFile.fromBinaryReader(BinaryReader reader,
       {int? loopPoint, MidiFileLoopType? loopType}) {
     if (loopPoint != null && loopPoint < 0) {
       throw "The loop point must be a non-negative value.";
@@ -84,41 +92,44 @@ class MidiFile {
     final trackCount = reader.readInt16BigEndian();
     final resolution = reader.readInt16BigEndian();
 
-    final messageLists =
-        List<List<MidiMessage>>.filled(trackCount, [], growable: false);
-    final tickLists = List<List<int>>.filled(trackCount, [], growable: false);
+    // Read all track data
 
-    for (int i = 0; i < trackCount; i++) {
+    final messageListsPerChannel =
+        List<List<MidiMessage>>.filled(trackCount, [], growable: false);
+    final tickListsPerChannel =
+        List<List<int>>.filled(trackCount, [], growable: false);
+
+    for (int channelNum = 0; channelNum < trackCount; channelNum++) {
       final tracks = _readTrack(reader, loopType);
-      messageLists[i] = tracks.messages;
-      tickLists[i] = tracks.ticks;
+      messageListsPerChannel[channelNum] = tracks.messages;
+      tickListsPerChannel[channelNum] = tracks.ticks;
     }
 
+    // Insert loop point into correct place in the first channel
+
     if (loopPoint != 0) {
-      final tickList = tickLists[0];
-      final messageList = messageLists[0];
-      if (loopPoint <= tickList.last) {
-        for (int i = 0; i < tickList.length; i++) {
-          if (tickList[i] >= loopPoint) {
-            tickList.insert(i, loopPoint);
-            messageList.insert(i, MidiMessage.loopStart());
+      final firstChannelTicks = tickListsPerChannel[0];
+      final firstChannelMessages = messageListsPerChannel[0];
+
+      if (loopPoint <= firstChannelTicks.last) {
+        for (int i = 0; i < firstChannelTicks.length; i++) {
+          if (firstChannelTicks[i] >= loopPoint) {
+            firstChannelTicks.insert(i, loopPoint);
+            firstChannelMessages.insert(i, MidiMessage.loopStart());
             break;
           }
         }
       } else {
-        tickList.add(loopPoint);
-        messageList.add(MidiMessage.loopStart());
+        firstChannelTicks.add(loopPoint);
+        firstChannelMessages.add(MidiMessage.loopStart());
       }
     }
 
-    final mergedTracks = _mergeTracks(messageLists, tickLists, resolution);
+    // Merge all tracks
+
+    final mergedTracks =
+        _mergeTracks(messageListsPerChannel, tickListsPerChannel, resolution);
     _events = mergedTracks.events;
-    _noteEvents = mergedTracks.events
-        .where((e) => e.message.command == 0x80 || e.message.command == 0x90)
-        .toList();
-    _otherEvents = mergedTracks.events
-        .where((e) => e.message.command != 0x80 && e.message.command != 0x90)
-        .toList();
   }
 
   static _MidiMessagesAndTicks _readTrack(
@@ -190,6 +201,13 @@ class MidiFile {
               ticks.add(tick);
               break;
 
+            case 0x58: // Time Signature
+              var (numerator, denominator, b1, b2) = _readTimeSignature(reader);
+              messages.add(
+                  MidiMessage.timeSignature(numerator, denominator, b1, b2));
+              ticks.add(tick);
+              break;
+
             default:
               _discardData(reader);
               break;
@@ -219,7 +237,7 @@ class MidiFile {
       List<List<MidiMessage>> messageLists,
       List<List<int>> tickLists,
       int resolution) {
-    final mergedEvents = <MidiEventDetails>[];
+    final mergedEvents = <MidiEventDetailsEx>[];
 
     final indices = List<int>.filled(messageLists.length, 0, growable: false);
 
@@ -227,6 +245,10 @@ class MidiFile {
     Duration currentTime = Duration.zero;
 
     double tempo = 120.0;
+    int beatsPerBar = 4;
+    int currentBar = 0;
+    int currentBeat = 0;
+    int currentTickInBeat = 0;
 
     while (true) {
       int minTick = 0x7fffffffffffffff; // int max value
@@ -252,15 +274,62 @@ class MidiFile {
 
       currentTick += deltaTick;
       currentTime += deltaTime;
+      currentTickInBeat += deltaTick;
+      if (currentTickInBeat >= resolution) {
+        currentBeat += currentTickInBeat ~/ resolution;
+        currentTickInBeat %= resolution;
+        if (currentBeat >= beatsPerBar) {
+          currentBar += currentBeat ~/ beatsPerBar;
+          currentBeat %= beatsPerBar;
+        }
+      }
 
       final message = messageLists[minIndex][indices[minIndex]];
       if (message.type == MidiMessageType.tempoChange) {
         tempo = message.tempo;
+      } else if (message.type == MidiMessageType.timeSignature) {
+        beatsPerBar = message.timeSignature.$1;
       } else {
-        mergedEvents.add(MidiEventDetails(message, currentTime));
+        mergedEvents.add(MidiEventDetailsEx(
+          message,
+          currentTime,
+          currentTick,
+          currentBar,
+          currentBeat,
+          currentTickInBeat,
+        ));
       }
 
       indices[minIndex]++;
+    }
+
+    var sortedEvents = <MidiEventDetailsEx>[];
+
+    var i = 0;
+    while (i < mergedEvents.length) {
+      var currentTick = mergedEvents[i].songTick;
+      while (i < mergedEvents.length - 1 &&
+          mergedEvents[i + 1].songTick == currentTick) {
+        i++;
+      }
+      if (i > currentTick) {
+        var mid = mergedEvents.sublist(currentTick, i);
+        mid.sort((a, b) {
+          var aIsNote = a.message.command == 0x90 || a.message.command == 0x80;
+          var bIsNote = b.message.command == 0x90 || b.message.command == 0x80;
+          if (aIsNote && !bIsNote) {
+            return -1;
+          } else if (!aIsNote && bIsNote) {
+            return 1;
+          } else {
+            return 0;
+          }
+        });
+        sortedEvents.addAll(mid);
+      } else {
+        sortedEvents.add(mergedEvents[i]);
+      }
+      i++;
     }
 
     return _MidiMessagesAndTimes(mergedEvents);
@@ -283,18 +352,34 @@ class MidiFile {
     reader.pos += size;
   }
 
-  static int _readBeatsPerBar(BinaryReader reader) {
+  static (int numerator, int denominator, int b1, int b2) _readTimeSignature(
+      BinaryReader reader) {
     final size = reader.readMidiVariablelength();
     if (size != 4) {
       throw "Failed to read the time signature value.";
     }
 
     final numerator = reader.readUInt8();
-    final denominator = pow(2, reader.readUInt8());
+    final denominator = pow(2, reader.readUInt8()).toInt();
     final b2 = reader.readUInt8();
     final b3 = reader.readUInt8();
-    return numerator * 4 ~/ denominator;
+    return (numerator, denominator, b2, b3);
   }
+}
+
+// As Dart 2.x does not have tuples (records) yet, using classes as an alternative
+
+class _MidiMessagesAndTicks {
+  final List<MidiMessage> messages;
+  final List<int> ticks;
+
+  _MidiMessagesAndTicks(this.messages, this.ticks);
+}
+
+class _MidiMessagesAndTimes {
+  final List<MidiEventDetailsEx> events;
+
+  _MidiMessagesAndTimes(this.events);
 }
 
 class MidiMessage {
@@ -351,6 +436,12 @@ class MidiMessage {
         MidiMessageType.tempoChange.value, command, data1, data2);
   }
 
+  factory MidiMessage.timeSignature(
+      int numerator, int denominator, int b1, int b2) {
+    return MidiMessage._(
+        MidiMessageType.timeSignature.value, 0, numerator, denominator);
+  }
+
   factory MidiMessage.loopStart() {
     return MidiMessage._(MidiMessageType.loopStart.value, 0, 0, 0);
   }
@@ -374,6 +465,10 @@ class MidiMessage {
         return "LoopEnd";
       case MidiMessageType.endOfTrack:
         return "EndOfTrack";
+      case MidiMessageType.timeSignature:
+        return "TimeSignature: $data1/$data2";
+      default:
+        break;
     }
 
     var c = 'COM' + command.toRadixString(16);
@@ -447,16 +542,20 @@ class MidiMessage {
       return MidiMessageType.tempoChange;
     } else if (channel == MidiMessageType.loopStart.value) {
       return MidiMessageType.loopStart;
-    } else if (channel == MidiMessageType.loopEnd) {
+    } else if (channel == MidiMessageType.loopEnd.value) {
       return MidiMessageType.loopEnd;
-    } else if (channel == MidiMessageType.endOfTrack) {
+    } else if (channel == MidiMessageType.endOfTrack.value) {
       return MidiMessageType.endOfTrack;
+    } else if (channel == MidiMessageType.timeSignature.value) {
+      return MidiMessageType.timeSignature;
     } else {
       return MidiMessageType.normal;
     }
   }
 
   double get tempo => 60000000.0 / ((command << 16) | (data1 << 8) | data2);
+
+  (int numerator, int denominator) get timeSignature => (data1, data2);
 
   String _getNoteName(int data1) {
     /*
@@ -487,29 +586,15 @@ class MidiMessage {
   }
 }
 
-class MidiMessageType {
-  static const normal = MidiMessageType(0);
-  static const tempoChange = MidiMessageType(252);
-  static const loopStart = MidiMessageType(253);
-  static const loopEnd = MidiMessageType(254);
-  static const endOfTrack = MidiMessageType(255);
+enum MidiMessageType {
+  normal(0),
+  timeSignature(248),
+  tempoChange(252),
+  loopStart(253),
+  loopEnd(254),
+  endOfTrack(255);
 
   final int value;
 
   const MidiMessageType(this.value);
-}
-
-// As Dart 2.x does not have tuples (records) yet, using classes as an alternative
-
-class _MidiMessagesAndTicks {
-  final List<MidiMessage> messages;
-  final List<int> ticks;
-
-  _MidiMessagesAndTicks(this.messages, this.ticks);
-}
-
-class _MidiMessagesAndTimes {
-  final List<MidiEventDetails> events;
-
-  _MidiMessagesAndTimes(this.events);
 }

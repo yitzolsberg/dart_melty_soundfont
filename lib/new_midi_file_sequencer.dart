@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
-import 'midi_file.dart';
 import 'midi_file_sequencer.dart';
+import 'new_midi_file.dart';
 import 'synthesizer.dart';
 import 'audio_renderer.dart';
 import 'list_slice.dart';
@@ -19,7 +19,7 @@ class NewMidiFileSequencer implements AudioRenderer {
 
   double _speed = 1.0;
 
-  final MidiFile midiFile;
+  final NewMidiFile midiFile;
   bool? _loop;
 
   int _blockWrote = 0;
@@ -75,7 +75,7 @@ class NewMidiFileSequencer implements AudioRenderer {
       if (_blockWrote == synthesizer.blockSize) {
         _processEvents();
         _blockWrote = 0;
-        _currentTime += MidiFile.getTimeSpanFromSeconds(
+        _currentTime += NewMidiFile.getTimeSpanFromSeconds(
             _speed * synthesizer.blockSize / synthesizer.sampleRate);
       }
 
@@ -98,15 +98,10 @@ class NewMidiFileSequencer implements AudioRenderer {
         if (msg.type == MidiMessageType.normal) {
           if (onSendMessage == null) {
             if (!skipping || (msg.command != 0x80 && msg.command != 0x90)) {
-              var data1 = msg.data1;
-              if ((msg.command == 0x80 || msg.command == 0x90) &&
-                  msg.channel != 9) {
-                data1 -= 4;
-              }
               synthesizer.processMidiMessage(
                   channel: msg.channel,
                   command: msg.command,
-                  data1: data1,
+                  data1: msg.data1,
                   data2: msg.data2);
             }
           } else {

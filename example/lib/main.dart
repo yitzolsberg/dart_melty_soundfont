@@ -6,6 +6,7 @@ import 'dart:typed_data'; // for Uint8List
 import 'dart:math' as math;
 
 import 'package:dart_melty_soundfont/dart_melty_soundfont.dart';
+import 'package:dart_melty_soundfont/midi_file.dart';
 
 import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 

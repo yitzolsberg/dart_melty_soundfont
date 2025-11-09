@@ -5,4 +5,4 @@ homepage: https://github.com/chipweinberger/dart_melty_soundfont
 
 
 environment:
-  sdk: '>=2.12.0 <4.0.0'
+  sdk: '>=3.3.0 <4.0.0'
